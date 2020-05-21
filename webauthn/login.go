@@ -59,6 +59,7 @@ func (webauthn *WebAuthn) BeginLogin(user User, opts ...LoginOption) (*protocol.
 		UserID:               user.WebAuthnID(),
 		AllowedCredentialIDs: requestOptions.GetAllowedCredentialIDs(),
 		UserVerification:     requestOptions.UserVerification,
+		Extensions:           requestOptions.Extensions,
 	}
 
 	response := protocol.CredentialAssertion{requestOptions}
@@ -171,6 +172,22 @@ func (webauthn *WebAuthn) ValidateLogin(user User, session SessionData, parsedRe
 
 	// Handle steps 4 through 16
 	validError := parsedResponse.Verify(session.Challenge, rpID, rpOrigin, shouldVerifyUser, loginCredential.PublicKey)
+	
+	// Retry verification using `appid` extension value
+	// 
+	//   "[I]f a U2F authenticator indicates that a credential is
+	//   inapplicable . . . then the client MUST retry with the
+	//   U2F application parameter set to the SHA-256 hash of appId.
+	//   . . . The value of appId then replaces the rpId parameter 
+	//   of authenticatorGetAssertion."
+	// 
+	// §10.1. FIDO AppID Extension (appid) - point #5 under "Client Extension Processing"
+	// https://www.w3.org/TR/webauthn/#sctn-appid-extension
+	if validError != nil && session.Extensions != nil && session.Extensions["appid"] != nil {
+		rpID = session.Extensions["appid"].(string)
+		validError = parsedResponse.Verify(session.Challenge, rpID, rpOrigin, shouldVerifyUser, loginCredential.PublicKey)
+	}
+	
 	if validError != nil {
 		return nil, validError
 	}
